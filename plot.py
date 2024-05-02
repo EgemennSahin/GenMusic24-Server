@@ -24,14 +24,15 @@ def calculate_hrv_metrics(rr_intervals):
         "iqr": iqr_rr
     }
 
-# Load RR intervals from JSON file
-with open('rr_intervals.json', 'r') as f:
-    rr_intervals = json.load(f)
+if __name__ == "__main__":
+    # Load RR intervals from JSON file
+    with open('rr_intervals.json', 'r') as f:
+        rr_intervals = json.load(f)
 
-# Calculate HRV metrics for each part of the experiment
-for part in ["pre_experiment", "experiment", "post_experiment"]:
-    print(f"{part} HRV metrics:")
-    metrics = calculate_hrv_metrics(rr_intervals[part])
-    for metric, value in metrics.items():
-        print(f"{metric}: {value}")
-    print()
+    # Calculate HRV metrics for each part of the experiment
+    for part in ["pre_experiment", "experiment", "post_experiment"]:
+        print(f"{part} HRV metrics:")
+        metrics = calculate_hrv_metrics(rr_intervals[part])
+        for metric, value in metrics.items():
+            print(f"{metric}: {value}")
+        print()
