@@ -1,31 +1,14 @@
-import torch
-from transformers import MusicgenForConditionalGeneration, AutoProcessor
-import scipy
+import numpy as np
+import sounddevice as sd
 
-print(torch.__version__)
-print(torch.version.cuda)
+# Example: Generate a 440 Hz sine wave
+fs = 44100  # Sampling rate
+duration = 5  # in seconds
+t = np.linspace(0, duration, int(fs*duration), endpoint=False)  # Time vector
+audio = 0.5 * np.sin(2 * np.pi * 440 * t)  # Generate sine wave
 
-device = "cuda:0" if torch.cuda.is_available() else "cpu"
-print("Device: ", device)
+# Play audio
+sd.play(audio, samplerate=fs)
 
-model = MusicgenForConditionalGeneration.from_pretrained("facebook/musicgen-small")
-model.to(device)
-
-processor = AutoProcessor.from_pretrained("facebook/musicgen-small")
-
-text = "Drum and bass epic dramatic song futuristic with parts of 90's style"
-
-inputs = processor(
-    text=text,
-    padding=True,
-    return_tensors="pt",
-)
-inputs = {k: v.to(device) for k, v in inputs.items()}
-
-audio_values = model.generate(**inputs, do_sample=True, guidance_scale=1, max_new_tokens=1536)
-
-sampling_rate = model.config.audio_encoder.sampling_rate
-
-audio_name = "musicgen_outputs/" + text.replace('/', '-') + ".wav"
-
-scipy.io.wavfile.write(audio_name, rate=sampling_rate, data=audio_values[0, 0].cpu().numpy())
+# Wait for audio to finish playing
+sd.wait()

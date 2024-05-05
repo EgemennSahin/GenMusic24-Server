@@ -1,31 +1,69 @@
-from audiocraft.data.audio import audio_write
 from audiocraft.models import MusicGen
-from transformers import pipeline
+from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline, AutoProcessor, MusicgenForConditionalGeneration
+from audiocraft.data.audio import audio_write
 
 
-def get_opposite_effect_description(current_effect, rmssd, sdnn, pnn50):
-    # Initialize the GPT-2 model
-    gpt_model = pipeline('text-generation', model='gpt2')
+print("Loading AutoModelForCausalLM...")
+llm_model = AutoModelForCausalLM.from_pretrained(
+    "microsoft/Phi-3-mini-128k-instruct", 
+    device_map="cuda", 
+    torch_dtype="auto", 
+    trust_remote_code=True, 
+)
+print("Model loaded successfully.")
 
-    # Use the GPT-2 model to generate the opposite effect description
-    prompt = f"Given that the current music effect is {current_effect} and the HRV metrics are RMSSD: {rmssd}, SDNN: {sdnn}, PNN50: {pnn50}, the opposite music effect should be"
-    generated_text = gpt_model(prompt, max_length=100)[0]['generated_text']
+print("Loading tokenizer...")
+tokenizer = AutoTokenizer.from_pretrained("microsoft/Phi-3-mini-128k-instruct")
+print("Tokenizer loaded successfully.")
+
+print("Initializing pipeline...")
+pipe = pipeline(
+    "text-generation",
+    model=llm_model,
+    tokenizer=tokenizer,
+)
+print("Pipeline ready.")
+
+print("Loading MusicGen model...")
+musicgen_model = MusicGen.get_pretrained("facebook/musicgen-small")
+print("MusicGen model loaded.")
+
+print("Setting generation parameters...")
+musicgen_model.set_generation_params(duration=30)  # generate 15 seconds.
+print("Generation parameters set.")
+
+
+
+
+def get_opposite_effect_description(current_effect):
+    llm_model.to('cuda')  # Move to GPU when needed
+
+    # Define a concise prompt emphasizing direct response
+    prompt = f"Describe the opposite emotional effect of a music style which had this effect'{current_effect}'. The aim is to create a music style that has the opposite effect on HRV. Focus only on naming the emotion or music style." 
+
+    # Send the concise prompt to the model
+    messages = [
+        {"role": "system", "content": "Provide only the name of the emotion or music style that would be the opposite effect. Use very unique and specific words, and avoid general terms."},
+        {"role": "user", "content": prompt},
+    ]
+
+
+    # Set generation arguments to limit the output
+    generation_args = {
+        "max_new_tokens": 30,  # reduced to focus on a brief answer
+        "return_full_text": False,
+        "do_sample": True,  # Use sampling to generate diverse outputs
+        "temperature": 1.5,  # Increase the temperature for more diverse outputs
+    }
+
+    output = pipe(messages, **generation_args)[0]['generated_text']
     
-    # Extract the opposite effect description from the generated text
-    opposite_effect = generated_text.split("be")[1].strip()
+    print("Generated text: ", output)
+    
+    llm_model.to('cpu')  # Move to CPU when not in use
+    return output
 
-    return opposite_effect
-
-def generate_music(description, rmssd, sdnn, pnn50):
-    # Initialize the MusicGen model
-    musicgen_model = MusicGen.get_pretrained("small")
-    musicgen_model.set_generation_params(duration=15)  # generate 15 seconds.
-
-    opposite_description = get_opposite_effect_description(description, rmssd, sdnn, pnn50)
-    wav = musicgen_model.generate([opposite_description])  # Generate a sample with the opposite effect
-
-    for idx, one_wav in enumerate(wav):
-        # Will save under {idx}.wav, with loudness normalization at -14 db LUFS.
-        audio_write(f'{idx}', one_wav.cpu(), musicgen_model.sample_rate, strategy="loudness")
-
-    return wav, musicgen_model.sample_rate
+def generate_music(description):
+    wav = musicgen_model.generate([description])
+    song = wav[0].cpu()[0].numpy()
+    return song, musicgen_model.sample_rate

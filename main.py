@@ -1,26 +1,28 @@
-import json
-from flask import Flask, request, jsonify
+from generate import generate_music, get_opposite_effect_description
+from plot import calculate_hrv_metrics
+from flask import Flask, request, jsonify, json
 import time
 import sounddevice as sd
 
-from plot import calculate_hrv_metrics
-print('here')
-
-from generate import generate_music, get_opposite_effect_description
-
 app = Flask(__name__)
 
-# Directory to store audio files
-audio_dir = 'test_audios'
-
 # List to store RR intervals
-rr_intervals = {
+experiment_rr_intervals = {
     "pre_experiment": [],
-    "experiment": [],
     "post_experiment": []
 }
 
+
+song_rr_intervals = {
+    "pre_song": [],
+    "during_song": [],
+    "post_song": []
+}
+
 current_experiment_part = "pre_experiment"
+current_song_part = "pre_song"
+current_song_description = "music"
+
 experiment_ongoing = False
 
 
@@ -29,10 +31,15 @@ def heart_rate():
     global current_experiment_part
     data = request.get_json()  # Parse JSON data from request body
     rr_interval = data['rrInterval']
-    print("RR Interval Received: ", rr_interval)
+    if not experiment_ongoing:
+        return jsonify({"message": "Experiment not started."})
 
     # Store RR intervals in the appropriate list
-    rr_intervals[current_experiment_part].append(rr_interval)
+    if current_experiment_part == "experiment":
+        # Check if there exists a dictionary with the description as the current song description inside rr_intervals["experiment"]
+        song_rr_intervals[current_song_part].append(rr_interval)
+    else:
+        experiment_rr_intervals[current_experiment_part].append(rr_interval)
 
     return jsonify({"message": "Data received successfully."})
 
@@ -40,49 +47,91 @@ def heart_rate():
 def start_experiment():
     global experiment_ongoing
     experiment_ongoing = True
+
+    print("Experiment started.")
     return jsonify({"message": "Experiment started."})
 
 @app.route('/api/stopExperiment', methods=['GET'])
 def stop_experiment():
     global experiment_ongoing
     experiment_ongoing = False
+
+    print("Experiment stopped.")
     return jsonify({"message": "Experiment stopped."})
 
+@app.route('/api/getExperimentData', methods=['GET'])
+def get_experiment_data():
+    global experiment_rr_intervals, song_rr_intervals
+    return jsonify({
+        "experiment": experiment_rr_intervals,
+        "song": song_rr_intervals
+    })
 
 @app.route('/api/playMusic', methods=['GET'])
 def play_music():
-    global current_experiment_part
+    global current_experiment_part, current_song_description, current_song_part, song_rr_intervals
     current_experiment_part = "pre_experiment"  # Start with pre_experiment
-    rr_intervals = {
-        "pre_experiment": [],
-        "experiment": [],
-        "post_experiment": []
-    }
 
     # Record HRV for 1 minute before playing the music
-    print("Recording HRV for 1 minute before playing the music...")
-    time.sleep(60)  # Wait for 1 minute
+    print("Recording HRV for 1 minute before experiment...")
+    time.sleep(2)  # Wait for 1 minute
 
-    # Change to experiment part
     current_experiment_part = "experiment"
 
     while experiment_ongoing:
-        # Generate and play music based on HRV data
-        metrics_pre = calculate_hrv_metrics(rr_intervals.get("pre_experiment", []))
-        metrics_post = calculate_hrv_metrics(rr_intervals.get("post_experiment", []))
-        if metrics_pre and metrics_post:
-            description = get_opposite_effect_description(metrics_pre["rmssd"], metrics_post["rmssd"])
-            song, sample_rate = generate_music(description, metrics_pre["rmssd"], metrics_pre["sdnn"], metrics_pre["pnn50"])
-            print(f"Playing music style: {description}")
-            sd.play(song.numpy(), sample_rate)
-            sd.wait()
+        # Record HRV for until the music is generated
+        current_song_part = "pre_song"
+        print("Recording HRV before music is generated...")
 
-        # Reset for the next iteration
-        rr_intervals = {
-            "pre_experiment": [],
-            "experiment": [],
-            "post_experiment": []
+        prev_song_description = current_song_description
+
+        # Get the previous song's pre and post metrics
+        metrics_pre = calculate_hrv_metrics(song_rr_intervals.get("pre_song", []))
+        metrics_post = calculate_hrv_metrics(song_rr_intervals.get("post_song", []))
+
+        song_rr_intervals = {
+            "pre_song": [],
+            "during_song": [],
+            "post_song": []
         }
+        
+        print("Previous song pre metrics: ", metrics_pre)
+        print("Previous song post metrics: ", metrics_post)
+
+        if metrics_pre and metrics_post:
+            change_percentage = (metrics_post["rmssd"] - metrics_pre["rmssd"]) / metrics_pre["rmssd"] * 100
+
+            if abs(change_percentage) < 5:  # Change of less than 5% is considered stable
+                current_effect = "HRV stable"
+            elif change_percentage > 0:
+                current_effect = "HRV increased"
+            else:
+                current_effect = "HRV decreased"
+
+            print("Current effect: ", current_effect)
+            print("prev rmsdd: ", metrics_pre["rmssd"])
+            print("post rmsdd: ", metrics_post["rmssd"])
+            print("Previous song description: ", prev_song_description)
+
+            current_song_description = get_opposite_effect_description(current_effect)
+        
+
+
+        song, sample_rate = generate_music(current_song_description)
+        # Play the generated music
+        current_song_part = "during_song"
+        print("Recording HRV while music is playing...")
+        print(f"Playing music style: {current_song_description}")
+
+        sd.play(song, sample_rate)
+        sd.wait()
+        
+
+        # Record HRV for 15 seconds post_song
+        current_song_part = "post_song"
+        print("Recording HRV after music is generated...")
+        time.sleep(15)
+
 
     # Record HRV for 1 minute after the music
     print("Recording HRV for 1 minute after playing the music...")
@@ -92,9 +141,24 @@ def play_music():
     # Save the RR intervals to a JSON file with the name as the current timestamp
     timestamp = int(time.time())
     with open(f'rr_intervals_{timestamp}.json', 'w') as f:
-        json.dump(rr_intervals, f)
+        json.dump(experiment_rr_intervals, f)
+
+    # Find the difference in hrv metrics from before and after the experiment
+    metrics_pre = calculate_hrv_metrics(experiment_rr_intervals["pre_experiment"])
+    metrics_post = calculate_hrv_metrics(experiment_rr_intervals["post_experiment"])
+
+    print("HRV metrics before experiment:")
+    for metric, value in metrics_pre.items():
+        print(f"{metric}: {value}")
+    print()
+
+    print("HRV metrics after experiment:")
+    for metric, value in metrics_post.items():
+        print(f"{metric}: {value}")
+
+
 
     return jsonify({"message": "Music generation completed."})
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    app.run(debug=False, port=5000)
