@@ -58,8 +58,21 @@ def start_experiment():
 
 @app.route('/api/stopExperiment', methods=['GET'])
 def stop_experiment():
-    global experiment_ongoing
+    global experiment_ongoing, experiment_rr_intervals, song_rr_intervals
     experiment_ongoing = False
+
+    experiment_rr_intervals = {
+        "pre_experiment": [],
+        "post_experiment": []
+    }
+
+    song_rr_intervals = {
+        "pre_song": [],
+        "during_song": [],
+        "post_song": []
+    }
+
+
 
     print("Experiment stopped.")
     return jsonify({"message": "Experiment stopped."})
@@ -162,56 +175,33 @@ def play_music():
         print(f"{metric}: {value}")
 
 
-
     return jsonify({"message": "Music generation completed."})
 
 
 
 @app.route('/api/baselineTest/<session_name>', methods=['POST'])
 def baseline_test(session_name):
-    global current_experiment_part, current_song_part, song_rr_intervals
+    global current_experiment_part
 
-    # Get the path of the music file
-    music_file_path = './test.wav'
-
-    # Check if the file exists
-    if not os.path.exists(music_file_path):
-        return jsonify({"message": f"Music file not found."}), 404
+    start_experiment()
 
     current_experiment_part = "pre_experiment"  # Start with pre_experiment
 
     # Record HRV for 1 minute before playing the music
-    print("Recording HRV for 1 minute before experiment...")
-    time.sleep(1)  # Wait for 1 minute
+    print("Recording HRV for 5 minutes before music is played...")
+    time.sleep(300)      # Wait for 1 minute
 
     current_experiment_part = "experiment"
 
-    # Record HRV for until the music is played
-    current_song_part = "pre_song"
-    print("Recording HRV before music is played...")
-
-    # Play the music
-    current_song_part = "during_song"
     print("Recording HRV while music is playing...")
-    print(f"Playing music file: {music_file_path}")
+    # print(f"Playing music file: {music_file_path}")
 
-    # Read the wav file
-    sample_rate, song = read('./test.wav')
+    time.sleep(300)
 
-    # Play the wav file
-    sd.play(song, sample_rate)
-    sd.wait()
-
-
-    # Record HRV for 15 seconds post_song
-    current_song_part = "post_song"
-    print("Recording HRV after music is played...")
-    time.sleep(15)
-
-    # Record HRV for 1 minute after the music
-    print("Recording HRV for 1 minute after playing the music...")
     current_experiment_part = "post_experiment"
-    time.sleep(60)  # Wait for 1 minute
+
+    print("Recording HRV for 5 minutes after music is played...")
+    time.sleep(300)
 
     # Save the RR intervals to a JSON file with the name as the current timestamp
     timestamp = int(time.time())
@@ -230,6 +220,9 @@ def baseline_test(session_name):
     print("HRV metrics after experiment:")
     for metric, value in metrics_post.items():
         print(f"{metric}: {value}")
+
+    stop_experiment()
+
 
     return jsonify({"message": "Baseline test completed."})
 
