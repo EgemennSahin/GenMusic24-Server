@@ -90,6 +90,8 @@ def play_music():
     global current_experiment_part, current_song_description, current_song_part, song_rr_intervals
     current_experiment_part = "pre_experiment"  # Start with pre_experiment
 
+    start_experiment()
+
     # Record HRV for 1 minute before playing the music
     print("Recording HRV for 1 minute before experiment...")
     time.sleep(2)  # Wait for 1 minute
@@ -173,6 +175,8 @@ def play_music():
     print("HRV metrics after experiment:")
     for metric, value in metrics_post.items():
         print(f"{metric}: {value}")
+
+    stop_experiment()
 
 
     return jsonify({"message": "Music generation completed."})
