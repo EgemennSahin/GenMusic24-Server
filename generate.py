@@ -1,6 +1,5 @@
 from audiocraft.models import MusicGen
-from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline, AutoProcessor, MusicgenForConditionalGeneration
-from audiocraft.data.audio import audio_write
+from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 
 
 print("Loading AutoModelForCausalLM...")
@@ -43,14 +42,14 @@ def get_opposite_effect_description(current_effect):
 
     # Send the concise prompt to the model
     messages = [
-        {"role": "system", "content": "Provide only the name of the emotion or music style that would be the opposite effect. Use very unique and specific words, and avoid general terms."},
+        {"role": "system", "content": "Act like a professional in the music and hrv field. Please answer the following question with one or two words only:"},
         {"role": "user", "content": prompt},
     ]
 
 
     # Set generation arguments to limit the output
     generation_args = {
-        "max_new_tokens": 30,  # reduced to focus on a brief answer
+        "max_new_tokens": 500,  # reduced to focus on a brief answer
         "return_full_text": False,
         "do_sample": True,  # Use sampling to generate diverse outputs
         "temperature": 1.5,  # Increase the temperature for more diverse outputs
@@ -64,6 +63,12 @@ def get_opposite_effect_description(current_effect):
     return output
 
 def generate_music(description):
-    wav = musicgen_model.generate([description])
-    song = wav[0].cpu()[0].numpy()
-    return song, musicgen_model.sample_rate
+    song = musicgen_model.generate([description])
+    return song.cpu(), musicgen_model.sample_rate
+
+def generate_conditional_music(song_prompt, sample_rate, description):
+    overlap = 5
+    last_sec = song_prompt[:, :, -overlap*sample_rate:]
+    song = musicgen_model.generate_continuation(prompt=last_sec, prompt_sample_rate=sample_rate, descriptions=[description])
+    song = song[:, :, overlap*sample_rate:]
+    return song.cpu(), musicgen_model.sample_rate
