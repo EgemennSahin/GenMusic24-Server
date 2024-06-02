@@ -3,19 +3,15 @@ import threading
 from flask import Flask, request, jsonify, json
 from flask_cors import CORS
 import time
-import logging
-
 import numpy as np
-
-from generate import generate_music, generate_conditional_music, get_opposite_effect_description
+from filters import process_audio
+from generate import generate_music, generate_conditional_music
 from plot import calculate_hrv_metrics
+import sounddevice as sd
 
 
 app = Flask(__name__)
 CORS(app, origins=['http://localhost:3000'])
-
-# Set up logging
-logging.basicConfig(level=logging.DEBUG)
 
 # List to store RR intervals
 experiment_rr_intervals = {
@@ -31,7 +27,7 @@ song_rr_intervals = {
 
 current_experiment_part = "pre_experiment"
 current_song_part = "pre_song"
-current_song_description = "music"
+current_song_description = "Upbeat, welcoming tune with catchy melodies, bright synths, and light percussion. Tempo: 100-120 BPM, evoking positivity and excitement"
 
 experiment_ongoing = False
 
@@ -40,7 +36,6 @@ def heart_rate():
     global current_experiment_part
     try:
         data = request.get_json()  # Parse JSON data from request body
-        logging.debug(f"Received data: {data}")  # Debugging line to print incoming data
 
         if 'rrIntervals' not in data or not isinstance(data['rrIntervals'], list):
             return jsonify({"message": "Invalid data format"}), 400
@@ -59,7 +54,7 @@ def heart_rate():
         return jsonify({"message": "Data received successfully."})
 
     except Exception as e:
-        logging.error(f"Error processing heart rate data: {e}")
+        print(f"Error processing heart rate data: {e}")
         return jsonify({"message": "Internal Server Error"}), 500
 
 @app.route('/api/startExperiment', methods=['GET'])
@@ -103,8 +98,6 @@ def get_experiment_data():
 
 @app.route('/api/playMusic', methods=['GET'])
 def play_music():
-    import sounddevice as sd
-
     global current_experiment_part, current_song_description, current_song_part, song_rr_intervals
     current_experiment_part = "pre_experiment"  # Start with pre_experiment
 
@@ -131,18 +124,24 @@ def play_music():
             "during_song": [],
             "post_song": []
         }
+        print('here 2')
 
         # Create a Manager object and use it to create the list
+        # This is necessary to share the list between threads
         manager = Manager()
         songs = manager.list()
 
+        print('here 3')
         # Generate the base song
         song, sample_rate = generate_music(current_song_description)
-        songs.append(song)
+        print('here 4')
 
+        songs.append(song)
+        
+        print('here 5')
         # Generate the next 3 songs in separate threads while the current song is playing
         for _ in range(3):
-            print("Generating next song...")
+            print("Generating next song with prompt: ", current_song_description)
             # Start a new thread to generate the next song
             thread = threading.Thread(target=generate_next_song, args=(songs, sample_rate, current_song_description))
             thread.start()
@@ -150,38 +149,36 @@ def play_music():
             # Play the current song
             current_song_part = "during_song"
             print("...Recording HRV while music is playing...")
-            sd.play(songs[-1][0].cpu()[0].numpy(), sample_rate)
+            
+            song_to_play = process_audio(songs[-1][0].cpu()[0].numpy())
+            sd.play(song_to_play, sample_rate)
             sd.wait()
 
             # Wait for the next song to be generated
             thread.join()
         
 
-        if not np.isnan(metrics_pre["mean"]) and not np.isnan(metrics_post["mean"]):
-            change_percentage_rmssd = (metrics_post["rmssd"] - metrics_pre["rmssd"]) / metrics_pre["rmssd"] * 100
-            change_percentage_lf = (metrics_post["lf_power"] - metrics_pre["lf_power"]) / metrics_pre["lf_power"] * 100 if metrics_pre["lf_power"] else np.nan
-            change_percentage_hf = (metrics_post["hf_power"] - metrics_pre["hf_power"]) / metrics_pre["hf_power"] * 100 if metrics_pre["hf_power"] else np.nan
-
-            # Determine current effect based on HRV metrics
-            if abs(change_percentage_rmssd) < 5 and abs(change_percentage_lf) < 5 and abs(change_percentage_hf) < 5:
-                current_effect = "HRV stable"
-            elif abs(change_percentage_hf) > abs(change_percentage_lf):
-                current_effect = "Parasympathetic increase"
-            elif abs(change_percentage_lf) > abs(change_percentage_hf):
-                current_effect = "Sympathetic increase"
-            else:
-                current_effect = "Mixed response"
-
-            current_song_description = get_opposite_effect_description(current_effect)
-        else:
-            print("Insufficient data to determine HRV metrics changes. Defaulting to previous description.")
-            current_song_description = get_opposite_effect_description("HRV stable")
-        
-
         # Record HRV for as long as the pre_song RR intervals
         current_song_part = "post_song"
         print("...Recording HRV after music is generated...")
         time.sleep(len(song_rr_intervals["pre_song"]))
+
+
+        if not np.isnan(metrics_pre["mean"]) and not np.isnan(metrics_post["mean"]):
+            pre_lf_hf_ratio = metrics_pre["lf_power"] / metrics_pre["hf_power"]
+            post_lf_hf_ratio = metrics_post["lf_power"] / metrics_post["hf_power"]
+
+            # Determine opposite effect based on the change in LF/HF ratio
+            # If the LF/HF ratio increases, the previous song had a sympathetic effect, so the next song should calm the listener down
+            if post_lf_hf_ratio > pre_lf_hf_ratio:
+                current_effect = "Slow, calming music with gentle piano, acoustic guitar, and soft strings. Tempo: 60-80 BPM, evoking peace and tranquility"
+
+            # If the LF/HF ratio decreases, the previous song had a parasympathetic effect, so the next song should energize the listener
+            else:
+                current_effect = "Fast, energizing music with dynamic rhythms, electric guitar, and driving drums. Tempo: 120-140 BPM, evoking urgency and excitement."
+
+
+            current_song_description = current_effect
 
 
     # Record HRV for 1 minute after the music
@@ -212,13 +209,13 @@ def play_music():
 
     return jsonify({"message": "Music generation completed."})
 
-def generate_next_song(songs, sample_rate, description):
-    print("generate_next_song function called with songs length: ", len(songs))  # Add this line
 
+def generate_next_song(songs, sample_rate, description):
     # Generate the next song based on the previous one
     try:
         song, _ = generate_conditional_music(songs[-1], sample_rate, description)
         songs.append(song)
+
 
         print("Next song generated.")
 
@@ -226,53 +223,6 @@ def generate_next_song(songs, sample_rate, description):
         print(f"Error generating next song: {e}")
 
 
-
-@app.route('/api/baselineTest/<session_name>', methods=['POST'])
-def baseline_test(session_name):
-    global current_experiment_part
-
-    start_experiment()
-
-    current_experiment_part = "pre_experiment"  # Start with pre_experiment
-
-    # Record HRV for 1 minute before playing the music
-    print("Recording HRV for 5 minutes before music is played...")
-    time.sleep(300)      # Wait for 1 minute
-
-    current_experiment_part = "experiment"
-
-    print("Recording HRV while music is playing...")
-    # print(f"Playing music file: {music_file_path}")
-
-    time.sleep(300)
-
-    current_experiment_part = "post_experiment"
-
-    print("Recording HRV for 5 minutes after music is played...")
-    time.sleep(300)
-
-    # Save the RR intervals to a JSON file with the name as the current timestamp
-    timestamp = int(time.time())
-    with open(f'rr_intervals_{session_name}_{timestamp}.json', 'w') as f:
-        json.dump(experiment_rr_intervals, f)
-
-    # Find the difference in hrv metrics from before and after the experiment
-    metrics_pre = calculate_hrv_metrics(experiment_rr_intervals["pre_experiment"])
-    metrics_post = calculate_hrv_metrics(experiment_rr_intervals["post_experiment"])
-
-    print("HRV metrics before experiment:")
-    for metric, value in metrics_pre.items():
-        print(f"{metric}: {value}")
-    print()
-
-    print("HRV metrics after experiment:")
-    for metric, value in metrics_post.items():
-        print(f"{metric}: {value}")
-
-    stop_experiment()
-
-
-    return jsonify({"message": "Baseline test completed."})
 
 if __name__ == "__main__":
     app.run(debug=False, port=5000)
