@@ -96,10 +96,25 @@ def get_experiment_data():
 
 
 
-@app.route('/api/playMusic', methods=['GET'])
+@app.route('/api/playMusic', methods=['POST'])
 def play_music():
     global current_experiment_part, current_song_description, current_song_part, song_rr_intervals
     current_experiment_part = "pre_experiment"  # Start with pre_experiment
+    data = request.get_json()
+    calming_description = data.get('calming_description')
+    focus_description = data.get('focus_description')
+    
+
+    if calming_description == "":
+        calming_description = "Slow, calming music with gentle piano, acoustic guitar, and soft strings"
+    if focus_description == "":
+        focus_description = "Fast, energetic music with powerful drums, electric guitar, and intense synths"
+    
+    calming_description = calming_description + ". Tempo: 60-80 BPM, evoking peace and tranquility."
+    focus_description = focus_description + ". Tempo: 120-140 BPM, evoking urgency and excitement."
+        
+    print("Calming description: ", calming_description)
+    print("Focus description: ", focus_description)
 
     start_experiment()
 
@@ -171,14 +186,11 @@ def play_music():
             # Determine opposite effect based on the change in LF/HF ratio
             # If the LF/HF ratio increases, the previous song had a sympathetic effect, so the next song should calm the listener down
             if post_lf_hf_ratio > pre_lf_hf_ratio:
-                current_effect = "Slow, calming music with gentle piano, acoustic guitar, and soft strings. Tempo: 60-80 BPM, evoking peace and tranquility"
+                current_song_description = calming_description
 
             # If the LF/HF ratio decreases, the previous song had a parasympathetic effect, so the next song should energize the listener
             else:
-                current_effect = "Fast, energizing music with dynamic rhythms, electric guitar, and driving drums. Tempo: 120-140 BPM, evoking urgency and excitement."
-
-
-            current_song_description = current_effect
+                current_song_description = focus_description
 
 
     # Record HRV for 1 minute after the music
