@@ -18,13 +18,11 @@ CORS(app, origins=['http://localhost:3000'])
 # List to store RR intervals
 experiment_rr_intervals = {
     "pre_experiment": [],
-    "songs": [],
     "post_experiment": [],
 }
 
 experiment_heart_rate = {
     "pre_experiment": [],
-    "songs": [],
     "post_experiment": [],
 }
 
@@ -132,20 +130,6 @@ def get_experiment_data():
     })
 
 
-# conditions = [
-#     {
-#         "calming": ". Tempo: 60-80 BPM",
-#         "focus": ". Tempo: 120-140 BPM"
-#     },
-#     {
-#         "calming": ". Tempo: 120-140 BPM",
-#         "focus": ". Tempo: 60-80 BPM"
-#     }
-# ]
-
-# if  random.random() > 0.5:
-#     conditions.reverse()
-
 
 @app.route('/api/playMusic', methods=['POST'])
 def play_music():
@@ -170,7 +154,7 @@ def play_music():
 
     # Record HRV for 1 minute before playing the music
     print("...Recording HRV for 1 minute before experiment...")
-    time.sleep(2)  # Wait for 1 minute
+    time.sleep(60)  # Wait for 1 minute
 
     current_experiment_part = "experiment"
     
@@ -197,7 +181,6 @@ def play_music():
         current_song_part = "pre_song"
         print("...Recording HRV before music is played...")
 
-
         # Create a Manager object and use it to create the list
         # This is necessary to share the list between threads
         manager = Manager()
@@ -205,7 +188,6 @@ def play_music():
 
         # Generate the base song
         song, sample_rate = generate_music(current_song_description)
-
         songs.append(song)
         
         # Generate the next 4 songs in separate threads while the current song is playing
